@@ -1,0 +1,23 @@
+[Unit]
+Description=FORGE IMS FastAPI service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=forge
+Group=forge
+WorkingDirectory=/opt/forge-ims/backend
+EnvironmentFile=/opt/forge-ims/backend/.env
+ExecStart=/opt/forge-ims/backend/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/forge-ims/backend /var/www/forge-ims
+
+[Install]
+WantedBy=multi-user.target
