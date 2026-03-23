@@ -1,6 +1,7 @@
 """app/api/users.py"""
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -99,9 +100,33 @@ async def update_user(user_id: str, payload: UserUpdate,
 
 @router.delete("/{user_id}")
 async def delete_user(user_id: str, db: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
-    await db.execute(
-        text("UPDATE users SET is_active = FALSE WHERE id = CAST(:uid AS UUID)"),
-        {"uid": user_id}
-    )
-    await db.commit()
-    return {"message": "User deactivated"}
+    user_row = (
+        await db.execute(
+            text("SELECT id, name, is_active FROM users WHERE id = CAST(:uid AS UUID)"),
+            {"uid": user_id},
+        )
+    ).fetchone()
+    if not user_row:
+        raise HTTPException(404, "User not found")
+
+    if user_row.is_active:
+        await db.execute(
+            text("UPDATE users SET is_active = FALSE WHERE id = CAST(:uid AS UUID)"),
+            {"uid": user_id},
+        )
+        await db.commit()
+        return {"message": "User deactivated"}
+
+    try:
+        await db.execute(
+            text("DELETE FROM users WHERE id = CAST(:uid AS UUID)"),
+            {"uid": user_id},
+        )
+        await db.commit()
+        return {"message": "User permanently deleted"}
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            409,
+            "Cannot delete user because historical records reference this account.",
+        )

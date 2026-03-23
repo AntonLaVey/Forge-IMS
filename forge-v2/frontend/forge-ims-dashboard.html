@@ -488,6 +488,7 @@ function enterApp(){
   document.getElementById('urole').textContent=usr.role;
   document.getElementById('uav').textContent=usr.name.charAt(0).toUpperCase();
   if(usr.role==='ADMIN')document.querySelectorAll('.adm').forEach(function(el){el.classList.remove('hd');});
+  preloadDashboard();
   go('materials');
 }
 function logout(){sessionStorage.clear();tok='';usr=null;pin='';document.getElementById('app').classList.remove('vis');document.getElementById('ls').style.display='flex';rpdots();}
@@ -533,9 +534,38 @@ function sbadge(s){
   return'<span class="badge '+(m[s]||'b2')+'">'+e(s)+'</span>';
 }
 var _cats=[],_locs=[],_vens=[],_mats=[];
+function setCount(id,val){
+  var el=document.getElementById(id);
+  if(el)el.textContent=String(val||0);
+}
 async function ldShared(){
   var r=await Promise.all([GET('/categories').catch(function(){return[];}),GET('/locations').catch(function(){return[];}),GET('/vendors').catch(function(){return[];})]);
   _cats=r[0];_locs=r[1];_vens=r[2];
+}
+async function loadVens(){
+  try{_vens=await GET('/vendors');}
+  catch(_){_vens=[];}
+  return _vens;
+}
+async function preloadDashboard(){
+  try{
+    var r=await Promise.all([
+      GET('/assets?page_size=200').catch(function(){return{items:[]};}),
+      GET('/categories').catch(function(){return[];}),
+      GET('/locations').catch(function(){return[];}),
+      GET('/vendors').catch(function(){return[];}),
+      GET('/kits').catch(function(){return[];}),
+      GET('/bom').catch(function(){return[];}),
+    ]);
+    _mats=r[0]&&r[0].items?r[0].items:[];
+    _cats=r[1];_locs=r[2];_vens=r[3];
+    setCount('nb-m',_mats.filter(function(a){return a.status!=='SCRAPPED';}).length);
+    setCount('nb-c',_cats.length);
+    setCount('nb-l',_locs.length);
+    setCount('nb-v',_vens.length);
+    setCount('nb-k',r[4].length);
+    setCount('nb-b',r[5].length);
+  }catch(_){}
 }
 
 /* ── MATERIALS ── */
@@ -596,8 +626,10 @@ function lazyLoadThumbs(items){
 }
 function fltM(q){
   var all=_showScrapped?_mats:_mats.filter(function(a){return a.status!=='SCRAPPED';});
+  var filtered=all.filter(function(a){return(a.name+a.sku).toLowerCase().indexOf(q.toLowerCase())>=0;});
   var tb=document.getElementById('mtb');
-  if(tb)tb.innerHTML=rMrows(all.filter(function(a){return(a.name+a.sku).toLowerCase().indexOf(q.toLowerCase())>=0;}));
+  if(tb)tb.innerHTML=rMrows(filtered);
+  lazyLoadThumbs(filtered);
 }
 async function toggleScrapped(){
   _showScrapped=!_showScrapped;
@@ -606,6 +638,7 @@ async function toggleScrapped(){
   var items=_showScrapped?_mats:_mats.filter(function(a){return a.status!=='SCRAPPED';});
   var tb=document.getElementById('mtb');
   if(tb)tb.innerHTML=rMrows(items);
+  lazyLoadThumbs(items);
 }
 async function oM(id){
   _eaid=id||null;document.getElementById('mmat-t').textContent=id?'Edit Material':'Add Material';
@@ -966,6 +999,48 @@ async function pPR(el,ta){
     }).join(''):'<tr><td colspan="6"><div class="emp"><div class="ei">&#x1F4E6;</div>No POs yet.</div></td></tr>')
     +'</tbody></table></div></div>';
 }
+function oReq(){
+  ['rq-t','rq-d','rq-q','rq-c','rq-n'].forEach(function(i){sv(i,'');});
+  sv('rq-p','2');
+  om('mreq');
+}
+async function svReq(){
+  var title=gv('rq-t'),desc=gv('rq-d');
+  if(!title){toast('Title required','er');return;}
+  if(!desc){toast('Description required','er');return;}
+  var body={
+    title:title,
+    description:desc,
+    priority:parseInt(gv('rq-p'))||2,
+    qty_requested:gv('rq-q')?parseFloat(gv('rq-q')):null,
+    estimated_cost:gv('rq-c')?parseFloat(gv('rq-c')):null,
+    needed_by:gv('rq-n')||null
+  };
+  try{
+    await POST('/procurement/requests',body);
+    toast('Request submitted');
+    cm('mreq');
+    go('procurement');
+  }catch(ex){toast(ex.message,'er');}
+}
+async function oPO(){
+  if(!usr||usr.role!=='ADMIN'){toast('Admin access required','er');return;}
+  sv('po-v','');sv('po-bc','');sv('po-n','');
+  var vendors=await loadVens();
+  sopts(document.getElementById('po-v'),vendors,'id',function(v){return v.name;},'— Select Vendor —');
+  om('mpo');
+}
+async function svPO(){
+  var vendorId=gv('po-v');
+  if(!vendorId){toast('Vendor required','er');return;}
+  var body={vendor_id:vendorId,budget_category:gv('po-bc')||null,notes:gv('po-n')||null};
+  try{
+    var po=await POST('/procurement/pos',body);
+    toast('PO created: '+(po.po_number||'Draft'));
+    cm('mpo');
+    go('procurement');
+  }catch(ex){toast(ex.message,'er');}
+}
 
 async function pRP(el,ta){
   var r=await Promise.all([
@@ -1049,11 +1124,13 @@ async function pU(el,ta){
   el.innerHTML='<div class="tc"><div class="th"><div class="tt">Users</div></div><div class="tw">'
     +'<table><thead><tr><th>Name</th><th>Role</th><th>Active</th><th>Last Login</th><th></th></tr></thead><tbody>'
     +users.map(function(u){
+      var canHardDelete=!u.is_active;
+      var title=canHardDelete?'Delete permanently':'Deactivate';
       return'<tr><td class="tn">'+e(u.name)+'</td>'
         +'<td>'+(u.role==='ADMIN'?'<span class="badge bo">ADMIN</span>':'<span class="badge b2">STAFF</span>')+'</td>'
         +'<td>'+(u.is_active?'<span class="badge bg">Active</span>':'<span class="badge br">Inactive</span>')+'</td>'
         +'<td class="tm">'+fd(u.last_login)+'</td>'
-        +'<td><div class="tac"><button class="ib dl" title="Deactivate" onclick="deactUsr(\''+u.id+'\',\''+e(u.name)+'\')">&#x1F5D1;</button></div></td></tr>';
+        +'<td><div class="tac"><button class="ib dl" title="'+title+'" onclick="deleteUsr(\''+u.id+'\',\''+e(u.name)+'\','+(u.is_active?'true':'false')+')">&#x1F5D1;</button></div></td></tr>';
     }).join('')
     +'</tbody></table></div></div>';
 }
@@ -1065,9 +1142,17 @@ async function svUsr(){
   try{await POST('/users/',{name:nm,pin:p,role:r});toast('User created');cm('musr');go('users');}
   catch(ex){toast(ex.message,'er');}
 }
-function deactUsr(id,nm){
-  conf('Deactivate user?','"'+nm+'" will be deactivated.',async function(){
-    try{await DEL('/users/'+id);toast('User deactivated');go('users');}
+function deleteUsr(id,nm,isActive){
+  var title=isActive?'Deactivate user?':'Delete user permanently?';
+  var msg=isActive
+    ?'"'+nm+'" will be deactivated.'
+    :'"'+nm+'" is inactive and will be permanently deleted.';
+  conf(title,msg,async function(){
+    try{
+      var r=await DEL('/users/'+id);
+      toast((r&&r.message)||'User updated');
+      go('users');
+    }
     catch(ex){toast(ex.message,'er');}
   });
 }
