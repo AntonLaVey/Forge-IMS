@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-set -Eeuo pipefail
-APP_ROOT=/opt/forge-ims
-GIT_WORK_TREE="$APP_ROOT" git checkout -f main
-cd "$APP_ROOT"
-./scripts/deploy.sh
